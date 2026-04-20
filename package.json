@@ -1,14 +1,14 @@
 {
-  "name": "template",
+  "name": "examples-tic-tac-toe",
   "version": "1.0.0",
   "description": "Example for Spexora",
-  "homepage": "https://github.com/Spexora/template#readme",
+  "homepage": "https://github.com/Spexora/examples-tic-tac-toe#readme",
   "bugs": {
-    "url": "https://github.com/Spexora/template/issues"
+    "url": "https://github.com/Spexora/examples-tic-tac-toe/issues"
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/Spexora/template.git"
+    "url": "git+https://github.com/Spexora/examples-tic-tac-toe.git"
   },
   "license": "MIT",
   "author": "Hattorius (Aaron Jonk)",
