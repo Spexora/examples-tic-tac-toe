@@ -2,6 +2,7 @@
   "default": {
     "formatOptions": {
       "snippetInterface": "synchronous"
-    }
+    },
+    "import": ["features/**/*.ts"]
   }
 }
