@@ -9,6 +9,15 @@ import {
   type GameState,
   type Player,
 } from "../../src/lib/game.js";
+import {
+  createMultiplayerSession,
+  joinSession,
+  clientSendMove,
+  serverProcessMove,
+  serverPublishState,
+  type MultiplayerSession,
+  type Role,
+} from "../../src/lib/multiplayerGame.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -18,6 +27,16 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 
 let game: GameState;
 let selectedIndex: number;
+
+// ─────────────────────────────────────────────────────────────
+// Multiplayer state for scenarios
+// ─────────────────────────────────────────────────────────────
+
+let mpSession: MultiplayerSession;
+let crossSelectedIndex: number;
+let circleSelectedIndex: number;
+let crossMoveSent: boolean;
+let lastServerAccepted: boolean;
 
 // ─────────────────────────────────────────────────────────────
 // Game feature steps
@@ -60,6 +79,11 @@ Given("a game has started", function () {
 Given("one square already contains a cross", function () {
   selectedIndex = 0;
   game = makeMove(game, selectedIndex);
+  // Sync multiplayer session server state if a multiplayer scenario is active
+  if (mpSession) {
+    mpSession = { ...mpSession, serverState: { ...game } };
+    mpSession = serverPublishState(mpSession);
+  }
 });
 
 When("the user selects a different empty square", function () {
@@ -303,4 +327,296 @@ Then("the cell changes appearance", function () {
     /\.cell:not\(:disabled\):hover\s*\{[^}]+\}/.test(source) ||
     /\.cell:hover\s*\{[^}]+\}/.test(source);
   assert.ok(hasHover, "Should have a CSS hover rule for grid cells");
+});
+
+// ─────────────────────────────────────────────────────────────
+// Multiplayer feature steps
+// ─────────────────────────────────────────────────────────────
+
+Given("the user has not started a game", function () {
+  // No game has been started yet; mode selection screen is shown
+});
+
+Then("singleplayer and multiplayer options are shown", function () {
+  const source = readPageSource();
+  const hasSingleplayer = /singleplayer|single.player/i.test(source);
+  const hasMultiplayer = /multiplayer|multi.player/i.test(source);
+  assert.ok(hasSingleplayer, "Page should contain a singleplayer option");
+  assert.ok(hasMultiplayer, "Page should contain a multiplayer option");
+});
+
+When("the user selects the multiplayer option", function () {
+  mpSession = createMultiplayerSession();
+});
+
+Then("an invite link is shown", function () {
+  const source = readPageSource();
+  assert.ok(
+    /invite/i.test(source),
+    "Page should contain an invite link section",
+  );
+  assert.ok(mpSession.inviteCode, "Session should have an invite code");
+});
+
+Given("the user has selected the multiplayer option", function () {
+  mpSession = createMultiplayerSession();
+});
+
+When("an opponent joins the game", function () {
+  mpSession = joinSession(mpSession);
+  game = { ...mpSession.serverState };
+});
+
+Given("a new game has been created", function () {
+  mpSession = createMultiplayerSession();
+  game = { ...mpSession.serverState };
+});
+
+When("a user joins through the invite link", function () {
+  mpSession = joinSession(mpSession);
+  game = { ...mpSession.serverState };
+});
+
+Then("one user is assigned a cross and the other a circle", function () {
+  assert.notEqual(
+    mpSession.hostRole,
+    mpSession.guestRole,
+    "Host and guest should have different roles",
+  );
+  assert.ok(
+    (mpSession.hostRole === "X" && mpSession.guestRole === "O") ||
+      (mpSession.hostRole === "O" && mpSession.guestRole === "X"),
+    "One player should be assigned X and the other O",
+  );
+});
+
+Given("a user has joined through the invite link", function () {
+  mpSession = joinSession(mpSession);
+  game = { ...mpSession.serverState };
+});
+
+Given("no moves have been made", function () {
+  assert.ok(
+    mpSession.serverState.board.every((cell) => cell === null),
+    "No moves should have been made yet",
+  );
+});
+
+When("the cross user selects an empty square", function () {
+  crossSelectedIndex = mpSession.serverState.board.findIndex(
+    (cell) => cell === null,
+  );
+  assert.ok(crossSelectedIndex !== -1, "There should be an empty square");
+  const result = clientSendMove(mpSession, "X", crossSelectedIndex);
+  mpSession = result.session;
+  crossMoveSent = result.sent;
+});
+
+Then("that square shows a cross for both users", function () {
+  // Server processes the pending move
+  const { session: processed, accepted } = serverProcessMove(mpSession);
+  assert.ok(accepted, "Server should accept the cross move");
+  mpSession = processed;
+  // Server publishes updated state to both clients (SSE)
+  mpSession = serverPublishState(mpSession);
+  assert.equal(
+    mpSession.hostLocalState!.board[crossSelectedIndex],
+    "X",
+    "Host should see a cross at the selected square",
+  );
+  assert.equal(
+    mpSession.guestLocalState!.board[crossSelectedIndex],
+    "X",
+    "Guest should see a cross at the selected square",
+  );
+});
+
+When("the circle user selects an empty square", function () {
+  circleSelectedIndex = mpSession.serverState.board.findIndex(
+    (cell) => cell === null,
+  );
+  assert.ok(circleSelectedIndex !== -1, "There should be an empty square");
+  // Save board state for "the board does not change" assertion
+  (this as any).boardBefore = [...mpSession.serverState.board];
+  const result = clientSendMove(mpSession, "O", circleSelectedIndex);
+  mpSession = result.session;
+  // Note: server processing happens in the Then steps
+});
+
+Then("that square shows a circle for both users", function () {
+  // Server processes the pending move
+  const { session: processed, accepted } = serverProcessMove(mpSession);
+  assert.ok(accepted, "Server should accept the circle move");
+  mpSession = processed;
+  // Server publishes updated state to both clients (SSE)
+  mpSession = serverPublishState(mpSession);
+  assert.equal(
+    mpSession.hostLocalState!.board[circleSelectedIndex],
+    "O",
+    "Host should see a circle at the selected square",
+  );
+  assert.equal(
+    mpSession.guestLocalState!.board[circleSelectedIndex],
+    "O",
+    "Guest should see a circle at the selected square",
+  );
+});
+
+// ─────────────────────────────────────────────────────────────
+// Managed-by-server feature steps
+// ─────────────────────────────────────────────────────────────
+
+Given("a multiplayer game is in progress", function () {
+  mpSession = createMultiplayerSession();
+  mpSession = joinSession(mpSession);
+  game = { ...mpSession.serverState };
+});
+
+Given("it is the cross user's turn", function () {
+  assert.equal(
+    mpSession.serverState.currentPlayer,
+    "X",
+    "It should be the cross user's turn",
+  );
+});
+
+Then("the client sends the move to the server", function () {
+  assert.ok(crossMoveSent, "The move should have been sent to the server");
+  assert.ok(
+    mpSession.pendingMove !== null,
+    "There should be a pending move awaiting server processing",
+  );
+});
+
+Then("the move is not applied only in the local client state", function () {
+  assert.equal(
+    mpSession.hostLocalState!.board[crossSelectedIndex],
+    null,
+    "The host local state should not have the move applied yet",
+  );
+  assert.equal(
+    mpSession.guestLocalState!.board[crossSelectedIndex],
+    null,
+    "The guest local state should not have the move applied yet",
+  );
+});
+
+Given("the server receives a valid move", function () {
+  crossSelectedIndex = mpSession.serverState.board.findIndex(
+    (cell) => cell === null,
+  );
+  assert.ok(crossSelectedIndex !== -1, "There should be an empty square");
+  const result = clientSendMove(mpSession, "X", crossSelectedIndex);
+  mpSession = result.session;
+  crossMoveSent = result.sent;
+});
+
+When("the server processes the move", function () {
+  (this as any).prevServerBoard = [...mpSession.serverState.board];
+  const { session: processed, accepted } = serverProcessMove(mpSession);
+  mpSession = processed;
+  lastServerAccepted = accepted;
+});
+
+Then("the server updates the game state", function () {
+  assert.ok(lastServerAccepted, "Server should have accepted the move");
+  const prevBoard: (string | null)[] = (this as any).prevServerBoard;
+  assert.notDeepEqual(
+    [...mpSession.serverState.board],
+    prevBoard,
+    "Server board should have changed after processing the move",
+  );
+});
+
+Then(
+  "the server publishes the updated game state to both clients",
+  function () {
+    const prevHostBoard = mpSession.hostLocalState
+      ? [...mpSession.hostLocalState.board]
+      : null;
+    mpSession = serverPublishState(mpSession);
+    assert.deepEqual(
+      [...mpSession.hostLocalState!.board],
+      [...mpSession.serverState.board],
+      "Host local state should match the server state",
+    );
+    assert.deepEqual(
+      [...mpSession.guestLocalState!.board],
+      [...mpSession.serverState.board],
+      "Guest local state should match the server state",
+    );
+  },
+);
+
+Given("the server has published a game state update", function () {
+  // Make a valid move, process it, and publish it to both clients
+  const index = mpSession.serverState.board.findIndex((cell) => cell === null);
+  assert.ok(index !== -1, "There should be an empty square to move to");
+  const result = clientSendMove(mpSession, "X", index);
+  mpSession = result.session;
+  const { session: processed, accepted } = serverProcessMove(mpSession);
+  assert.ok(accepted, "The move should be accepted");
+  mpSession = processed;
+  mpSession = serverPublishState(mpSession);
+});
+
+When("both clients receive the server-sent event", function () {
+  // The server-sent event has already been applied via serverPublishState.
+  // Both clients now hold the published state.
+});
+
+Then("both clients show the same board state", function () {
+  assert.deepEqual(
+    mpSession.hostLocalState!.board,
+    mpSession.guestLocalState!.board,
+    "Both clients should show the same board state",
+  );
+});
+
+Given("a square is already occupied", function () {
+  // X makes the first move at position 0; server processes and publishes
+  selectedIndex = 0;
+  const result = clientSendMove(mpSession, "X", selectedIndex);
+  mpSession = result.session;
+  const { session: processed, accepted } = serverProcessMove(mpSession);
+  assert.ok(accepted, "X move should be accepted");
+  mpSession = processed;
+  mpSession = serverPublishState(mpSession);
+  game = { ...mpSession.serverState };
+});
+
+When("a user selects that square", function () {
+  // A user (O, whose turn it is) attempts to select the already-occupied square
+  const boardBefore = [...mpSession.serverState.board];
+  (this as any).boardBefore = boardBefore;
+  const result = clientSendMove(mpSession, "O", selectedIndex);
+  mpSession = result.session;
+});
+
+Then("the client sends the move attempt to the server", function () {
+  assert.ok(
+    mpSession.pendingMove !== null,
+    "There should be a pending move attempt sent to the server",
+  );
+});
+
+Then("the server rejects the move", function () {
+  const { session: processed, accepted } = serverProcessMove(mpSession);
+  mpSession = processed;
+  assert.ok(!accepted, "Server should reject the move on an occupied square");
+});
+
+Then("the board does not change for either user", function () {
+  mpSession = serverPublishState(mpSession);
+  const boardBefore: (string | null)[] = (this as any).boardBefore;
+  assert.deepEqual(
+    mpSession.hostLocalState!.board,
+    boardBefore,
+    "Host board should not have changed",
+  );
+  assert.deepEqual(
+    mpSession.guestLocalState!.board,
+    boardBefore,
+    "Guest board should not have changed",
+  );
 });
