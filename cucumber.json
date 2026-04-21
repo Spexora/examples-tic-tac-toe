@@ -1,5 +1,7 @@
 {
   "default": {
+    "requireModule": ["tsx"],
+    "require": ["features/step_definitions/**/*.ts"],
     "formatOptions": {
       "snippetInterface": "synchronous"
     }
