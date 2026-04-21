@@ -1,7 +1,20 @@
 <script lang="ts">
 	import { createGame, makeMove, type GameState, type Player } from '$lib/game.js';
 
+	type Mode = 'select' | 'singleplayer';
+	let mode: Mode = 'select';
 	let game: GameState = createGame();
+
+	function startSingleplayer() {
+		game = createGame();
+		mode = 'singleplayer';
+	}
+
+	async function startMultiplayer() {
+		const res = await fetch('/api/games', { method: 'POST' });
+		const { sessionId } = await res.json();
+		window.location.href = `/game/${sessionId}`;
+	}
 
 	function handleCellClick(index: number) {
 		game = makeMove(game, index);
@@ -11,14 +24,19 @@
 		game = createGame();
 	}
 
-	function getStatusMessage(game: GameState): string {
-		if (game.status === 'won') {
-			return game.winner === 'X' ? 'Crosses won!' : 'Circles won!';
+	function backToMenu() {
+		mode = 'select';
+		game = createGame();
+	}
+
+	function getStatusMessage(g: GameState): string {
+		if (g.status === 'won') {
+			return g.winner === 'X' ? 'Crosses won!' : 'Circles won!';
 		}
-		if (game.status === 'tied') {
+		if (g.status === 'tied') {
 			return "It's a tie!";
 		}
-		return game.currentPlayer === 'X' ? "Cross's turn" : "Circle's turn";
+		return g.currentPlayer === 'X' ? "Cross's turn" : "Circle's turn";
 	}
 
 	function getCellSymbol(cell: Player | null): string {
@@ -31,33 +49,50 @@
 <div class="app">
 	<h1>Tic-Tac-Toe</h1>
 
-	<div class="status" aria-live="polite">
-		{#if game.status !== 'playing'}
-			<div class="game-over-message" aria-label="Game over message">
-				<p>{getStatusMessage(game)}</p>
-			</div>
-		{:else}
-			<p>{getStatusMessage(game)}</p>
-		{/if}
-	</div>
-
-	<div class="board" aria-label="Game board">
-		{#each game.board as cell, i}
-			<button
-				class="cell"
-				class:occupied={cell !== null}
-				class:cross={cell === 'X'}
-				class:circle={cell === 'O'}
-				disabled={cell !== null || game.status !== 'playing'}
-				on:click={() => handleCellClick(i)}
-				aria-label={cell ? `${cell === 'X' ? 'Cross' : 'Circle'} at position ${i + 1}` : `Empty square ${i + 1}`}
-			>
-				{getCellSymbol(cell)}
+	{#if mode === 'select'}
+		<div class="mode-select">
+			<p class="mode-prompt">Choose a game mode:</p>
+			<button class="mode-btn singleplayer-btn" on:click={startSingleplayer}>
+				Singleplayer
 			</button>
-		{/each}
-	</div>
+			<button class="mode-btn multiplayer-btn" on:click={startMultiplayer}>
+				Multiplayer
+			</button>
+		</div>
+	{:else}
+		<div class="status" aria-live="polite">
+			{#if game.status !== 'playing'}
+				<div class="game-over-message" aria-label="Game over message">
+					<p>{getStatusMessage(game)}</p>
+				</div>
+			{:else}
+				<p>{getStatusMessage(game)}</p>
+			{/if}
+		</div>
 
-	<button class="new-game-btn" on:click={startNewGame}>New Game</button>
+		<div class="board" aria-label="Game board">
+			{#each game.board as cell, i}
+				<button
+					class="cell"
+					class:occupied={cell !== null}
+					class:cross={cell === 'X'}
+					class:circle={cell === 'O'}
+					disabled={cell !== null || game.status !== 'playing'}
+					on:click={() => handleCellClick(i)}
+					aria-label={cell
+						? `${cell === 'X' ? 'Cross' : 'Circle'} at position ${i + 1}`
+						: `Empty square ${i + 1}`}
+				>
+					{getCellSymbol(cell)}
+				</button>
+			{/each}
+		</div>
+
+		<div class="btn-row">
+			<button class="new-game-btn" on:click={startNewGame}>New Game</button>
+			<button class="back-btn" on:click={backToMenu}>Back to Menu</button>
+		</div>
+	{/if}
 </div>
 
 <style>
@@ -86,6 +121,48 @@
 		color: #e0e0e0;
 		margin: 0;
 		text-shadow: 0 0 20px rgba(100, 149, 237, 0.5);
+	}
+
+	.mode-select {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 1rem;
+	}
+
+	.mode-prompt {
+		font-size: 1.2rem;
+		color: #a0c4ff;
+		margin: 0;
+	}
+
+	.mode-btn {
+		padding: 1rem 3rem;
+		font-size: 1.1rem;
+		border-radius: 8px;
+		border: 2px solid #6495ed;
+		cursor: pointer;
+		transition:
+			background-color 0.15s ease,
+			transform 0.1s ease,
+			box-shadow 0.15s ease;
+		width: 220px;
+	}
+
+	.singleplayer-btn {
+		background-color: #0f3460;
+		color: #e0e0e0;
+	}
+
+	.multiplayer-btn {
+		background-color: #0f3460;
+		color: #e0e0e0;
+	}
+
+	.mode-btn:hover {
+		background-color: #1a4a7a;
+		transform: scale(1.05);
+		box-shadow: 0 0 12px rgba(100, 149, 237, 0.4);
 	}
 
 	.status {
@@ -142,7 +219,10 @@
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		transition: background-color 0.15s ease, transform 0.1s ease, box-shadow 0.15s ease;
+		transition:
+			background-color 0.15s ease,
+			transform 0.1s ease,
+			box-shadow 0.15s ease;
 		color: #e0e0e0;
 	}
 
@@ -170,7 +250,13 @@
 		background-color: #16213e;
 	}
 
-	.new-game-btn {
+	.btn-row {
+		display: flex;
+		gap: 1rem;
+	}
+
+	.new-game-btn,
+	.back-btn {
 		padding: 0.75rem 2rem;
 		font-size: 1rem;
 		background-color: #0f3460;
@@ -178,10 +264,14 @@
 		border: 2px solid #6495ed;
 		border-radius: 8px;
 		cursor: pointer;
-		transition: background-color 0.15s ease, transform 0.1s ease, box-shadow 0.15s ease;
+		transition:
+			background-color 0.15s ease,
+			transform 0.1s ease,
+			box-shadow 0.15s ease;
 	}
 
-	.new-game-btn:hover {
+	.new-game-btn:hover,
+	.back-btn:hover {
 		background-color: #1a4a7a;
 		transform: scale(1.05);
 		box-shadow: 0 0 12px rgba(100, 149, 237, 0.4);
