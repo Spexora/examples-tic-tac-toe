@@ -1,14 +1,16 @@
 # Tic-Tac-Toe
 
-A single-player tic-tac-toe game built with [SvelteKit](https://kit.svelte.dev/).
+A tic-tac-toe game built with [SvelteKit](https://kit.svelte.dev/), supporting both single-player and multiplayer modes.
 
 ## Features
 
 - Classic 3×3 tic-tac-toe board
+- Game mode selection on the home screen (single player or multiplayer)
 - Alternating turns: crosses (X) go first, then circles (O)
 - Win detection for all rows, columns, and diagonals
 - Tie detection when all squares are filled
 - Game-over messages for wins and ties
+- **Multiplayer mode:** generates an invite link to share with an opponent; host is assigned X, guest is assigned O
 - Dark visual theme with high-contrast text (WCAG AA compliant)
 - Hover feedback on board cells and buttons
 
@@ -57,6 +59,7 @@ npm run preview
 Behaviour is specified in Cucumber feature files under `features/`:
 
 - `features/game.feature` – game logic (moves, wins, ties)
+- `features/multiplayer.feature` – multiplayer mode (invite link, role assignment, turn enforcement)
 - `features/visual_theme.feature` – dark theme and hover feedback
 
 Run them with:
@@ -76,10 +79,11 @@ src/
   lib/
     game.ts          # Pure game logic (state, moves, win/tie detection)
   routes/
-    +page.svelte     # Main tic-tac-toe page with UI and styling
+    +page.svelte     # Main page: mode selection, multiplayer invite, and game board
   app.html           # SvelteKit HTML shell
 features/
   game.feature       # BDD specs for game behaviour
+  multiplayer.feature# BDD specs for multiplayer mode
   visual_theme.feature
   step_definitions/
     stepdefs.ts      # Cucumber step implementations
