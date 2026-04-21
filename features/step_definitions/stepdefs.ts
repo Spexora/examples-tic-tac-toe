@@ -2,13 +2,22 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { Given, When, Then } from "@cucumber/cucumber";
+import { Before, Given, When, Then } from "@cucumber/cucumber";
 import {
   createGame,
   makeMove,
   type GameState,
   type Player,
 } from "../../src/lib/game.js";
+import {
+  GameSession,
+  GameSessionManager,
+  type MoveRequest,
+  type MoveResult,
+  type PlayerId,
+  type SessionId,
+} from "../../src/lib/gameSession.js";
+import { GameClient } from "../../src/lib/gameClient.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -18,6 +27,21 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 
 let game: GameState;
 let selectedIndex: number;
+
+// Multiplayer state
+let multiSession: GameSession | null = null;
+let sessionId: SessionId;
+let crossClient: GameClient;
+let circleClient: GameClient;
+let lastMoveRequest: MoveRequest | null = null;
+let lastMoveResult: MoveResult | null = null;
+
+// Reset multiplayer state before each scenario
+Before(function () {
+  multiSession = null;
+  lastMoveRequest = null;
+  lastMoveResult = null;
+});
 
 // ─────────────────────────────────────────────────────────────
 // Game feature steps
@@ -32,7 +56,8 @@ When("the user starts a new game", function () {
 });
 
 Then("a 3x3 game board is shown", function () {
-  assert.equal(game.board.length, 9, "Board should have 9 cells (3x3)");
+  const board = multiSession ? multiSession.getState().board : game.board;
+  assert.equal(board.length, 9, "Board should have 9 cells (3x3)");
 });
 
 Given("a new game has started", function () {
@@ -58,8 +83,23 @@ Given("a game has started", function () {
 });
 
 Given("one square already contains a cross", function () {
-  selectedIndex = 0;
-  game = makeMove(game, selectedIndex);
+  if (multiSession) {
+    // Multiplayer: route the move through the server
+    const emptyIdx = multiSession.getState().board.findIndex((c) => c === null);
+    assert.ok(emptyIdx !== -1, "There should be an empty square for cross");
+    selectedIndex = emptyIdx;
+    const req: MoveRequest = {
+      index: emptyIdx,
+      playerId: crossClient.playerId,
+      sessionId,
+    };
+    multiSession.receiveMove(req);
+    multiSession.processMove(req);
+    game = multiSession.getState();
+  } else {
+    selectedIndex = 0;
+    game = makeMove(game, selectedIndex);
+  }
 });
 
 When("the user selects a different empty square", function () {
@@ -84,10 +124,24 @@ Given("a square already contains a cross or a circle", function () {
 });
 
 When("the user selects that square", function () {
-  const boardBefore = [...game.board];
-  game = makeMove(game, selectedIndex);
-  // Store the before state for assertion
-  (this as any).boardBefore = boardBefore;
+  if (multiSession) {
+    // Multiplayer: send move attempt through server
+    const boardBefore = [...multiSession.getState().board];
+    (this as any).boardBefore = boardBefore;
+    const req: MoveRequest = {
+      index: selectedIndex,
+      playerId: crossClient.playerId,
+      sessionId,
+    };
+    multiSession.receiveMove(req);
+    lastMoveRequest = req;
+    lastMoveResult = multiSession.processMove(req);
+    game = multiSession.getState();
+  } else {
+    const boardBefore = [...game.board];
+    game = makeMove(game, selectedIndex);
+    (this as any).boardBefore = boardBefore;
+  }
 });
 
 Then("the board does not change", function () {
@@ -192,6 +246,11 @@ function readPageSource(): string {
   return readFileSync(pagePath, "utf-8");
 }
 
+function readGamePageSource(): string {
+  const pagePath = join(__dirname, "../../src/routes/game/[id]/+page.svelte");
+  return readFileSync(pagePath, "utf-8");
+}
+
 /** Parse a CSS hex colour into { r, g, b } 0-255 */
 function hexToRgb(hex: string): { r: number; g: number; b: number } | null {
   const clean = hex.replace("#", "");
@@ -289,7 +348,8 @@ Then("the button changes appearance", function () {
   // Check for a hover rule on .new-game-btn (or generic button hover)
   const hasHover =
     /\.new-game-btn:hover\s*\{[^}]+\}/.test(source) ||
-    /button:hover\s*\{[^}]+\}/.test(source);
+    /button:hover\s*\{[^}]+\}/.test(source) ||
+    /\.mode-btn:hover\s*\{[^}]+\}/.test(source);
   assert.ok(hasHover, "Should have a CSS hover rule for buttons");
 });
 
@@ -303,4 +363,458 @@ Then("the cell changes appearance", function () {
     /\.cell:not\(:disabled\):hover\s*\{[^}]+\}/.test(source) ||
     /\.cell:hover\s*\{[^}]+\}/.test(source);
   assert.ok(hasHover, "Should have a CSS hover rule for grid cells");
+});
+
+// ─────────────────────────────────────────────────────────────
+// Multiplayer feature steps
+// ─────────────────────────────────────────────────────────────
+
+/** Helper: create a fresh multiplayer session with cross and circle players */
+function setupMultiplayerSession(): void {
+  const manager = new GameSessionManager();
+  sessionId = manager.createSession();
+  multiSession = manager.getSession(sessionId)!;
+
+  const xId = "player-x";
+  const oId = "player-o";
+  multiSession.addPlayer(xId); // X (cross)
+  multiSession.addPlayer(oId); // O (circle)
+
+  crossClient = new GameClient(xId, sessionId);
+  circleClient = new GameClient(oId, sessionId);
+
+  // Subscribe both clients to server state updates
+  multiSession.subscribe(xId, (state) =>
+    crossClient.receiveServerUpdate(state),
+  );
+  multiSession.subscribe(oId, (state) =>
+    circleClient.receiveServerUpdate(state),
+  );
+
+  game = multiSession.getState();
+}
+
+Given("the user has not started a game", function () {
+  // No game has been started; default state
+  multiSession = null;
+});
+
+Then("singleplayer and multiplayer options are shown", function () {
+  const source = readPageSource();
+  const hasSingleplayer =
+    /singleplayer/i.test(source) || /single.?player/i.test(source);
+  const hasMultiplayer =
+    /multiplayer/i.test(source) || /multi.?player/i.test(source);
+  assert.ok(hasSingleplayer, "Page should show a singleplayer option");
+  assert.ok(hasMultiplayer, "Page should show a multiplayer option");
+});
+
+When("the user selects the multiplayer option", function () {
+  // Simulate creating a new game session (what clicking Multiplayer does)
+  const manager = new GameSessionManager();
+  sessionId = manager.createSession();
+  multiSession = manager.getSession(sessionId)!;
+
+  // Host joins as X
+  const hostId = "player-x";
+  multiSession.addPlayer(hostId);
+  crossClient = new GameClient(hostId, sessionId);
+  multiSession.subscribe(hostId, (state) =>
+    crossClient.receiveServerUpdate(state),
+  );
+});
+
+Then("an invite link is shown", function () {
+  // Verify a session ID was generated (forms the invite link /game/<sessionId>)
+  assert.ok(sessionId, "A session ID should have been created");
+  assert.ok(sessionId.length > 0, "Session ID should be non-empty");
+
+  // Also verify the game page source shows invite link functionality
+  const source = readGamePageSource();
+  const hasInviteLink = /invite/i.test(source) || /inviteLink/i.test(source);
+  assert.ok(hasInviteLink, "Game page should display an invite link");
+});
+
+Given("the user has selected the multiplayer option", function () {
+  const manager = new GameSessionManager();
+  sessionId = manager.createSession();
+  multiSession = manager.getSession(sessionId)!;
+
+  const hostId = "player-x";
+  multiSession.addPlayer(hostId);
+  crossClient = new GameClient(hostId, sessionId);
+  multiSession.subscribe(hostId, (state) =>
+    crossClient.receiveServerUpdate(state),
+  );
+});
+
+When("an opponent joins the game", function () {
+  assert.ok(multiSession, "A multiplayer session should exist");
+  const oId = "player-o";
+  multiSession!.addPlayer(oId);
+  circleClient = new GameClient(oId, sessionId);
+  multiSession!.subscribe(oId, (state) =>
+    circleClient.receiveServerUpdate(state),
+  );
+  // Server publishes updated state to notify both clients
+  multiSession!.publishState();
+  game = multiSession!.getState();
+});
+
+Given("a new game has been created", function () {
+  const manager = new GameSessionManager();
+  sessionId = manager.createSession();
+  multiSession = manager.getSession(sessionId)!;
+
+  // Host joins as cross (X)
+  const hostId = "player-x";
+  multiSession.addPlayer(hostId);
+  crossClient = new GameClient(hostId, sessionId);
+  multiSession.subscribe(hostId, (state) =>
+    crossClient.receiveServerUpdate(state),
+  );
+
+  game = multiSession.getState();
+});
+
+When("a user joins through the invite link", function () {
+  assert.ok(multiSession, "A game session should exist to join");
+  const joinerId = "player-o";
+  multiSession!.addPlayer(joinerId);
+  circleClient = new GameClient(joinerId, sessionId);
+  multiSession!.subscribe(joinerId, (state) =>
+    circleClient.receiveServerUpdate(state),
+  );
+  multiSession!.publishState();
+  game = multiSession!.getState();
+});
+
+Then("one user is assigned a cross and the other a circle", function () {
+  assert.ok(multiSession, "Session should exist");
+  assert.equal(
+    multiSession!.getPlayerRole(crossClient.playerId),
+    "X",
+    "First player should be cross (X)",
+  );
+  assert.equal(
+    multiSession!.getPlayerRole(circleClient.playerId),
+    "O",
+    "Second player should be circle (O)",
+  );
+  assert.notEqual(
+    crossClient.playerId,
+    circleClient.playerId,
+    "Players should have different IDs",
+  );
+});
+
+Given("a user has joined through the invite link", function () {
+  assert.ok(multiSession, "A game session should already exist");
+  if (multiSession!.getPlayerCount() < 2) {
+    const joinerId = "player-o";
+    multiSession!.addPlayer(joinerId);
+    circleClient = new GameClient(joinerId, sessionId);
+    multiSession!.subscribe(joinerId, (state) =>
+      circleClient.receiveServerUpdate(state),
+    );
+    multiSession!.publishState();
+  }
+  game = multiSession!.getState();
+});
+
+Given("no moves have been made", function () {
+  const board = multiSession ? multiSession.getState().board : game.board;
+  assert.ok(
+    board.every((cell) => cell === null),
+    "Board should be empty — no moves made yet",
+  );
+});
+
+When("the cross user selects an empty square", function () {
+  assert.ok(multiSession, "Multiplayer session required");
+  const emptyIdx = multiSession!.getState().board.findIndex((c) => c === null);
+  assert.ok(emptyIdx !== -1, "There should be an empty square");
+  selectedIndex = emptyIdx;
+  (this as any).boardBefore = [...multiSession!.getState().board];
+
+  // Client sends move to server; server validates and broadcasts
+  const req = crossClient.sendMove(emptyIdx);
+  lastMoveRequest = req;
+  multiSession!.receiveMove(req);
+  lastMoveResult = multiSession!.processMove(req);
+  game = multiSession!.getState();
+});
+
+Then("that square shows a cross for both users", function () {
+  const xState = crossClient.getLocalState();
+  const oState = circleClient.getLocalState();
+  assert.ok(xState, "Cross client should have received a state update");
+  assert.ok(oState, "Circle client should have received a state update");
+  assert.equal(
+    xState!.board[selectedIndex],
+    "X",
+    "Cross client should see X at the selected square",
+  );
+  assert.equal(
+    oState!.board[selectedIndex],
+    "X",
+    "Circle client should see X at the selected square",
+  );
+});
+
+When("the circle user selects an empty square", function () {
+  assert.ok(multiSession, "Multiplayer session required");
+  const emptyIdx = multiSession!.getState().board.findIndex((c) => c === null);
+  assert.ok(emptyIdx !== -1, "There should be an empty square");
+  selectedIndex = emptyIdx;
+  (this as any).boardBefore = [...multiSession!.getState().board];
+
+  // Client sends move to server; server validates and broadcasts (may reject)
+  const req = circleClient.sendMove(emptyIdx);
+  lastMoveRequest = req;
+  multiSession!.receiveMove(req);
+  lastMoveResult = multiSession!.processMove(req);
+  game = multiSession!.getState();
+});
+
+Then("that square shows a circle for both users", function () {
+  const xState = crossClient.getLocalState();
+  const oState = circleClient.getLocalState();
+  assert.ok(xState, "Cross client should have received a state update");
+  assert.ok(oState, "Circle client should have received a state update");
+  assert.equal(
+    xState!.board[selectedIndex],
+    "O",
+    "Cross client should see O at the selected square",
+  );
+  assert.equal(
+    oState!.board[selectedIndex],
+    "O",
+    "Circle client should see O at the selected square",
+  );
+});
+
+// ─────────────────────────────────────────────────────────────
+// Managed-by-server feature steps
+// ─────────────────────────────────────────────────────────────
+
+Given("a multiplayer game is in progress", function () {
+  setupMultiplayerSession();
+});
+
+Given("it is the cross user's turn", function () {
+  assert.ok(multiSession, "Session required");
+  assert.equal(
+    multiSession!.getState().currentPlayer,
+    "X",
+    "It should be cross's turn",
+  );
+});
+
+Then("the client sends the move to the server", function () {
+  assert.ok(
+    lastMoveRequest !== null,
+    "A move request should have been sent to the server",
+  );
+  const received = multiSession!.getReceivedMoves();
+  const found = received.some(
+    (r) =>
+      r.index === lastMoveRequest!.index &&
+      r.playerId === lastMoveRequest!.playerId,
+  );
+  assert.ok(found, "Server should have received the move request");
+});
+
+Then("the move is not applied only in the local client state", function () {
+  // The move was applied via the server (server is the authority), not local computation.
+  // The client's local state should match the server's authoritative state.
+  const clientState = crossClient.getLocalState();
+  const serverState = multiSession!.getState();
+  assert.ok(
+    clientState !== null,
+    "Client should have received state from server",
+  );
+  assert.deepEqual(
+    clientState!.board,
+    serverState.board,
+    "Client state should reflect the server state (move applied via server, not local-only)",
+  );
+});
+
+Given("the server receives a valid move", function () {
+  assert.ok(multiSession, "Session required");
+  const emptyIdx = multiSession!.getState().board.findIndex((c) => c === null);
+  assert.ok(
+    emptyIdx !== -1,
+    "There should be an empty square for a valid move",
+  );
+  const req: MoveRequest = {
+    index: emptyIdx,
+    playerId: crossClient.playerId,
+    sessionId,
+  };
+  multiSession!.receiveMove(req);
+  lastMoveRequest = req;
+});
+
+When("the server processes the move", function () {
+  assert.ok(multiSession, "Session required");
+  assert.ok(lastMoveRequest, "A move request should be pending");
+  lastMoveResult = multiSession!.processMove(lastMoveRequest!);
+  game = multiSession!.getState();
+});
+
+Then("the server updates the game state", function () {
+  assert.ok(lastMoveResult, "A move result should exist");
+  assert.ok(
+    lastMoveResult!.accepted,
+    "The server should have accepted the move",
+  );
+  assert.equal(
+    lastMoveResult!.state.board[lastMoveRequest!.index],
+    "X",
+    "Server state should have X at the played index",
+  );
+});
+
+Then(
+  "the server publishes the updated game state to both clients",
+  function () {
+    const xState = crossClient.getLocalState();
+    const oState = circleClient.getLocalState();
+    assert.ok(
+      xState !== null,
+      "Cross client should have received the server state update",
+    );
+    assert.ok(
+      oState !== null,
+      "Circle client should have received the server state update",
+    );
+    assert.deepEqual(
+      xState!.board,
+      multiSession!.getState().board,
+      "Cross client state should match server state",
+    );
+    assert.deepEqual(
+      oState!.board,
+      multiSession!.getState().board,
+      "Circle client state should match server state",
+    );
+  },
+);
+
+Given("the server has published a game state update", function () {
+  assert.ok(multiSession, "Session required");
+  const emptyIdx = multiSession!.getState().board.findIndex((c) => c === null);
+  assert.ok(emptyIdx !== -1, "There should be an empty square");
+  const req: MoveRequest = {
+    index: emptyIdx,
+    playerId: crossClient.playerId,
+    sessionId,
+  };
+  multiSession!.receiveMove(req);
+  multiSession!.processMove(req); // processes and broadcasts to both clients
+  game = multiSession!.getState();
+});
+
+When("both clients receive the server-sent event", function () {
+  // In our synchronous model, clients receive updates via subscription callbacks
+  // immediately when the server publishes. Verify both clients have state.
+  const xState = crossClient.getLocalState();
+  const oState = circleClient.getLocalState();
+  assert.ok(xState !== null, "Cross client should have received state");
+  assert.ok(oState !== null, "Circle client should have received state");
+});
+
+Then("both clients show the same board state", function () {
+  const xState = crossClient.getLocalState();
+  const oState = circleClient.getLocalState();
+  assert.ok(xState, "Cross client must have a state");
+  assert.ok(oState, "Circle client must have a state");
+  assert.deepEqual(
+    xState!.board,
+    oState!.board,
+    "Both clients should display the same board state",
+  );
+});
+
+Given("a square is already occupied", function () {
+  assert.ok(multiSession, "Session required");
+  // Make X's first move to occupy a square
+  selectedIndex = 0;
+  const req: MoveRequest = {
+    index: selectedIndex,
+    playerId: crossClient.playerId,
+    sessionId,
+  };
+  multiSession!.receiveMove(req);
+  multiSession!.processMove(req);
+  game = multiSession!.getState();
+});
+
+// "When a user selects that square" — used in managed_by_server invalid move scenario
+When("a user selects that square", function () {
+  assert.ok(multiSession, "Session required");
+  // Record the board state before the attempt
+  (this as any).boardBefore = [...multiSession!.getState().board];
+
+  // The current player attempts to play on the already-occupied square
+  const currentPlayer = multiSession!.getState().currentPlayer;
+  const attemptingClient = currentPlayer === "X" ? crossClient : circleClient;
+
+  const req: MoveRequest = {
+    index: selectedIndex,
+    playerId: attemptingClient.playerId,
+    sessionId,
+  };
+  lastMoveRequest = req;
+  multiSession!.receiveMove(req);
+  lastMoveResult = multiSession!.processMove(req);
+  game = multiSession!.getState();
+});
+
+Then("the client sends the move attempt to the server", function () {
+  assert.ok(
+    lastMoveRequest !== null,
+    "A move attempt should have been sent to the server",
+  );
+  const received = multiSession!.getReceivedMoves();
+  const found = received.some(
+    (r) =>
+      r.index === lastMoveRequest!.index &&
+      r.playerId === lastMoveRequest!.playerId,
+  );
+  assert.ok(found, "Server should have received the move attempt");
+});
+
+Then("the server rejects the move", function () {
+  assert.ok(lastMoveResult !== null, "A move result should exist");
+  assert.ok(
+    !lastMoveResult!.accepted,
+    "Server should have rejected the invalid move",
+  );
+});
+
+Then("the board does not change for either user", function () {
+  const boardBefore: (string | null)[] | undefined = (this as any).boardBefore;
+  assert.ok(
+    boardBefore,
+    "boardBefore should have been set before the move attempt",
+  );
+
+  const xBoard =
+    crossClient.getLocalState()?.board ?? multiSession!.getState().board;
+  const oBoard =
+    circleClient.getLocalState()?.board ?? multiSession!.getState().board;
+
+  assert.deepEqual(
+    xBoard,
+    boardBefore,
+    "Cross client board should not have changed after rejected move",
+  );
+  assert.deepEqual(
+    oBoard,
+    boardBefore,
+    "Circle client board should not have changed after rejected move",
+  );
 });
