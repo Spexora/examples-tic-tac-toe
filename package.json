@@ -14,7 +14,7 @@
   "author": "Hattorius (Aaron Jonk)",
   "type": "module",
   "scripts": {
-    "test": "cucumber-js",
+    "test": "NODE_OPTIONS='--import tsx/esm' cucumber-js",
     "prettier": "prettier --write --ignore-unknown ."
   },
   "devDependencies": {
