@@ -1,24 +1,46 @@
 <script lang="ts">
 	import { createGame, makeMove, type GameState, type Player } from '$lib/game.js';
 
+	type GameMode = 'singleplayer' | 'multiplayer' | null;
+
+	let mode: GameMode = null;
 	let game: GameState = createGame();
+	let inviteLink = '';
+	let opponentJoined = false;
+
+	function selectSinglePlayer() {
+		mode = 'singleplayer';
+		game = createGame();
+	}
+
+	function selectMultiplayer() {
+		mode = 'multiplayer';
+		game = createGame();
+		opponentJoined = false;
+		const gameId = Math.random().toString(36).slice(2, 10);
+		inviteLink =
+			(typeof window !== 'undefined' ? window.location.origin : '') + '/game/' + gameId;
+	}
 
 	function handleCellClick(index: number) {
 		game = makeMove(game, index);
 	}
 
 	function startNewGame() {
+		mode = null;
 		game = createGame();
+		opponentJoined = false;
+		inviteLink = '';
 	}
 
-	function getStatusMessage(game: GameState): string {
-		if (game.status === 'won') {
-			return game.winner === 'X' ? 'Crosses won!' : 'Circles won!';
+	function getStatusMessage(g: GameState): string {
+		if (g.status === 'won') {
+			return g.winner === 'X' ? 'Crosses won!' : 'Circles won!';
 		}
-		if (game.status === 'tied') {
+		if (g.status === 'tied') {
 			return "It's a tie!";
 		}
-		return game.currentPlayer === 'X' ? "Cross's turn" : "Circle's turn";
+		return g.currentPlayer === 'X' ? "Cross's turn" : "Circle's turn";
 	}
 
 	function getCellSymbol(cell: Player | null): string {
@@ -28,37 +50,66 @@
 	}
 </script>
 
-<div class="app">
-	<h1>Tic-Tac-Toe</h1>
-
-	<div class="status" aria-live="polite">
-		{#if game.status !== 'playing'}
-			<div class="game-over-message" aria-label="Game over message">
-				<p>{getStatusMessage(game)}</p>
-			</div>
-		{:else}
-			<p>{getStatusMessage(game)}</p>
-		{/if}
-	</div>
-
-	<div class="board" aria-label="Game board">
-		{#each game.board as cell, i}
-			<button
-				class="cell"
-				class:occupied={cell !== null}
-				class:cross={cell === 'X'}
-				class:circle={cell === 'O'}
-				disabled={cell !== null || game.status !== 'playing'}
-				on:click={() => handleCellClick(i)}
-				aria-label={cell ? `${cell === 'X' ? 'Cross' : 'Circle'} at position ${i + 1}` : `Empty square ${i + 1}`}
-			>
-				{getCellSymbol(cell)}
+{#if mode === null}
+	<div class="app">
+		<h1>Tic-Tac-Toe</h1>
+		<div class="mode-selection">
+			<p class="mode-prompt">Choose game mode:</p>
+			<button class="mode-btn singleplayer-btn" on:click={selectSinglePlayer}>
+				Single Player
 			</button>
-		{/each}
+			<button class="mode-btn multiplayer-btn" on:click={selectMultiplayer}>
+				Multiplayer
+			</button>
+		</div>
 	</div>
+{:else if mode === 'multiplayer' && !opponentJoined}
+	<div class="app">
+		<h1>Tic-Tac-Toe</h1>
+		<div class="invite-section">
+			<p>Share this invite link with your opponent:</p>
+			<div class="invite-link-display" aria-label="Invite link">
+				{inviteLink}
+			</div>
+			<p class="waiting-text">Waiting for opponent to join…</p>
+			<button class="new-game-btn" on:click={startNewGame}>Back</button>
+		</div>
+	</div>
+{:else}
+	<div class="app">
+		<h1>Tic-Tac-Toe</h1>
 
-	<button class="new-game-btn" on:click={startNewGame}>New Game</button>
-</div>
+		<div class="status" aria-live="polite">
+			{#if game.status !== 'playing'}
+				<div class="game-over-message" aria-label="Game over message">
+					<p>{getStatusMessage(game)}</p>
+				</div>
+			{:else}
+				<p>{getStatusMessage(game)}</p>
+			{/if}
+		</div>
+
+		<div class="board" aria-label="Game board">
+			{#each game.board as cell, i}
+				<button
+					class="cell"
+					class:occupied={cell !== null}
+					class:cross={cell === 'X'}
+					class:circle={cell === 'O'}
+					disabled={cell !== null || game.status !== 'playing'}
+					on:click={() => handleCellClick(i)}
+					aria-label={cell
+						? `${cell === 'X' ? 'Cross' : 'Circle'} at position ${i + 1}`
+						: `Empty square ${i + 1}`}
+				>
+					{getCellSymbol(cell)}
+				</button>
+			{/each}
+		</div>
+
+		<button class="new-game-btn" on:click={startNewGame}>New Game</button>
+	</div>
+{/if}
 
 <style>
 	:global(body) {

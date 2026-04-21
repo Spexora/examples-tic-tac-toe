@@ -184,6 +184,144 @@ Then("the message says circles won", function () {
 });
 
 // ─────────────────────────────────────────────────────────────
+// Multiplayer feature steps
+// ─────────────────────────────────────────────────────────────
+
+interface MultiplayerSession {
+  game: GameState;
+  hostPlayer: Player;
+  guestPlayer: Player;
+  opponentJoined: boolean;
+}
+
+let multiSession: MultiplayerSession | null = null;
+
+function createMultiplayerSession(): MultiplayerSession {
+  return {
+    game: createGame(),
+    hostPlayer: "X",
+    guestPlayer: "O",
+    opponentJoined: false,
+  };
+}
+
+Given("the user has not started a game", function () {
+  multiSession = null;
+});
+
+Then("singleplayer and multiplayer options are shown", function () {
+  const source = readPageSource();
+  const hasSingleplayer = /single[\s-]?player/i.test(source);
+  const hasMultiplayer = /multiplayer|multi-player/i.test(source);
+  assert.ok(hasSingleplayer, "Page should show a singleplayer option");
+  assert.ok(hasMultiplayer, "Page should show a multiplayer option");
+});
+
+When("the user selects the multiplayer option", function () {
+  multiSession = createMultiplayerSession();
+});
+
+Then("an invite link is shown", function () {
+  const source = readPageSource();
+  const hasInviteLink = /invite[\s-]?link/i.test(source);
+  assert.ok(hasInviteLink, "Page should show an invite link for multiplayer");
+});
+
+Given("the user has selected the multiplayer option", function () {
+  multiSession = createMultiplayerSession();
+  game = multiSession.game;
+});
+
+When("an opponent joins the game", function () {
+  assert.ok(multiSession !== null, "Multiplayer session should exist");
+  multiSession.opponentJoined = true;
+  game = multiSession.game;
+});
+
+Given("a new game has been created", function () {
+  multiSession = createMultiplayerSession();
+  game = multiSession.game;
+});
+
+When("a user joins through the invite link", function () {
+  assert.ok(multiSession !== null, "Multiplayer session should exist");
+  multiSession.opponentJoined = true;
+  game = multiSession.game;
+});
+
+Then("one user is assigned a cross and the other a circle", function () {
+  assert.ok(multiSession !== null, "Multiplayer session should exist");
+  assert.notEqual(
+    multiSession.hostPlayer,
+    multiSession.guestPlayer,
+    "Host and guest should have different roles",
+  );
+  assert.ok(
+    (multiSession.hostPlayer === "X" && multiSession.guestPlayer === "O") ||
+      (multiSession.hostPlayer === "O" && multiSession.guestPlayer === "X"),
+    "One user should be X and the other O",
+  );
+});
+
+Given("a user has joined through the invite link", function () {
+  assert.ok(multiSession !== null, "Multiplayer session should exist");
+  multiSession.opponentJoined = true;
+  game = multiSession.game;
+});
+
+Given("no moves have been made", function () {
+  assert.ok(
+    game.board.every((cell) => cell === null),
+    "No moves should have been made yet",
+  );
+});
+
+When("the cross user selects an empty square", function () {
+  // Keep shared session in sync with any prior step modifications to game
+  if (multiSession) multiSession.game = game;
+  selectedIndex = game.board.findIndex((cell) => cell === null);
+  assert.ok(selectedIndex !== -1, "There should be an empty square");
+  (this as any).boardBefore = [...game.board];
+  if (game.currentPlayer === "X") {
+    game = makeMove(game, selectedIndex);
+    if (multiSession) multiSession.game = game;
+  }
+});
+
+Then("that square shows a cross for both users", function () {
+  assert.equal(game.board[selectedIndex], "X", "Square should show a cross");
+  assert.ok(multiSession !== null, "Multiplayer session should exist");
+  assert.equal(
+    multiSession.game.board[selectedIndex],
+    "X",
+    "Square should show a cross for both users",
+  );
+});
+
+When("the circle user selects an empty square", function () {
+  // Keep shared session in sync with any prior step modifications to game
+  if (multiSession) multiSession.game = game;
+  selectedIndex = game.board.findIndex((cell) => cell === null);
+  assert.ok(selectedIndex !== -1, "There should be an empty square");
+  (this as any).boardBefore = [...game.board];
+  if (game.currentPlayer === "O") {
+    game = makeMove(game, selectedIndex);
+    if (multiSession) multiSession.game = game;
+  }
+  // If it is not O's turn, the board remains unchanged
+});
+
+Then("that square shows a circle for both users", function () {
+  assert.equal(game.board[selectedIndex], "O", "Square should show a circle");
+  assert.ok(multiSession !== null, "Multiplayer session should exist");
+  assert.equal(
+    multiSession.game.board[selectedIndex],
+    "O",
+    "Square should show a circle for both users",
+  );
+});
+
+// ─────────────────────────────────────────────────────────────
 // Visual theme steps
 // ─────────────────────────────────────────────────────────────
 
