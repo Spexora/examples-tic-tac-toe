@@ -16,6 +16,12 @@ import {
   type GameSession,
   type MoveResult,
 } from "../../src/lib/server-game.js";
+import {
+  createSingleplayerGame,
+  userMove as spUserMove,
+  botMove as spBotMove,
+  type SingleplayerState,
+} from "../../src/lib/singleplayer-game.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -25,6 +31,10 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 
 let game: GameState;
 let selectedIndex: number;
+
+// Singleplayer / bot state
+let singleplayerState: SingleplayerState | null = null;
+let remainingSquareIndex: number = -1;
 
 // Multiplayer / server-managed state
 let serverSession: GameSession | undefined = undefined;
@@ -65,12 +75,18 @@ Then("a 3x3 game board is shown", function () {
 Given("a new game has started", function () {
   game = createGame();
   serverSession = undefined;
+  singleplayerState = null;
 });
 
 When("the user selects an empty square", function () {
   selectedIndex = game.board.findIndex((cell) => cell === null);
   assert.ok(selectedIndex !== -1, "There should be an empty square");
-  game = makeMove(game, selectedIndex);
+  if (singleplayerState) {
+    singleplayerState = spUserMove(singleplayerState, selectedIndex);
+    game = singleplayerState.game;
+  } else {
+    game = makeMove(game, selectedIndex);
+  }
 });
 
 Then("a cross is shown in that square", function () {
@@ -84,6 +100,7 @@ Then("a cross is shown in that square", function () {
 Given("a game has started", function () {
   game = createGame();
   serverSession = undefined;
+  singleplayerState = null;
 });
 
 Given("one square already contains a cross", function () {
@@ -690,4 +707,133 @@ Then("the board does not change for either user", function () {
     boardBefore,
     "Client 2 board should not have changed after a rejected move",
   );
+});
+
+// ─────────────────────────────────────────────────────────────
+// Bot / singleplayer feature steps
+// ─────────────────────────────────────────────────────────────
+
+When("the user starts a singleplayer game", function () {
+  singleplayerState = createSingleplayerGame();
+  game = singleplayerState.game;
+  serverSession = undefined;
+});
+
+// Works for both Then and Given/And keyword contexts
+Then("the user plays as cross", function () {
+  assert.ok(singleplayerState, "Should be in singleplayer mode");
+  assert.equal(singleplayerState.userRole, "X", "User should play as cross");
+});
+
+Then("the bot plays as circle", function () {
+  assert.ok(singleplayerState, "Should be in singleplayer mode");
+  assert.equal(singleplayerState.botRole, "O", "Bot should play as circle");
+});
+
+Given("a new singleplayer game has started", function () {
+  singleplayerState = createSingleplayerGame();
+  game = singleplayerState.game;
+  serverSession = undefined;
+});
+
+Then("the bot makes the next move automatically", function () {
+  assert.ok(singleplayerState, "Should be in singleplayer mode");
+  assert.ok(singleplayerState.botTurn, "It should be the bot's turn");
+  singleplayerState = spBotMove(singleplayerState);
+  game = singleplayerState.game;
+});
+
+Then("a circle is shown in an empty square", function () {
+  assert.ok(
+    game.board.some((cell) => cell === "O"),
+    "There should be at least one circle on the board",
+  );
+});
+
+Given("the user has made the first move", function () {
+  assert.ok(singleplayerState, "Should be in singleplayer mode");
+  const index = singleplayerState.game.board.findIndex((cell) => cell === null);
+  assert.ok(index !== -1, "There should be an empty square");
+  singleplayerState = spUserMove(singleplayerState, index);
+  game = singleplayerState.game;
+  selectedIndex = index;
+});
+
+Given("the bot has not moved yet", function () {
+  assert.ok(singleplayerState, "Should be in singleplayer mode");
+  assert.ok(
+    singleplayerState.botTurn,
+    "It should be the bot's turn (bot has not moved yet)",
+  );
+});
+
+When("the user selects another empty square", function () {
+  const boardBefore = [...game.board];
+  (this as any).boardBefore = boardBefore;
+  // Attempt another user move — must be rejected because it is the bot's turn
+  const newIndex = game.board.findIndex((cell) => cell === null);
+  if (singleplayerState && newIndex !== -1) {
+    singleplayerState = spUserMove(singleplayerState, newIndex);
+    game = singleplayerState.game;
+  } else if (newIndex !== -1) {
+    game = makeMove(game, newIndex);
+  }
+});
+
+Given("a singleplayer game is in progress", function () {
+  singleplayerState = createSingleplayerGame();
+  game = singleplayerState.game;
+  serverSession = undefined;
+});
+
+Given("the user has two marks in a row", function () {
+  // Set up: X at 0, O at 3, X at 1 → O's turn, X threatens position 2
+  assert.ok(singleplayerState, "Should be in singleplayer mode");
+  let g = singleplayerState.game;
+  g = makeMove(g, 0); // X at 0
+  g = makeMove(g, 3); // O at 3
+  g = makeMove(g, 1); // X at 1  → now O's turn
+  singleplayerState = { ...singleplayerState, game: g, botTurn: true };
+  game = g;
+  remainingSquareIndex = 2;
+});
+
+Given("the bot has two marks in a row", function () {
+  // Set up: X(3), O(0), X(4), O(1), X(6) → O's turn, O threatens position 2
+  assert.ok(singleplayerState, "Should be in singleplayer mode");
+  let g = singleplayerState.game;
+  g = makeMove(g, 3); // X at 3
+  g = makeMove(g, 0); // O at 0
+  g = makeMove(g, 4); // X at 4
+  g = makeMove(g, 1); // O at 1  → X's turn
+  g = makeMove(g, 6); // X at 6  → O's turn
+  singleplayerState = { ...singleplayerState, game: g, botTurn: true };
+  game = g;
+  remainingSquareIndex = 2;
+});
+
+Given("the remaining square in that row is empty", function () {
+  assert.ok(
+    game.board[remainingSquareIndex] === null,
+    `Square ${remainingSquareIndex} should be empty`,
+  );
+});
+
+When("the bot takes its turn", function () {
+  assert.ok(singleplayerState, "Should be in singleplayer mode");
+  singleplayerState = spBotMove(singleplayerState);
+  game = singleplayerState.game;
+});
+
+Then("the bot marks the remaining square in that row", function () {
+  assert.equal(
+    game.board[remainingSquareIndex],
+    "O",
+    `Bot should have marked square ${remainingSquareIndex} with a circle`,
+  );
+});
+
+Then("the bot wins the game", function () {
+  assert.equal(game.status, "won", "Game should be in won state");
+  assert.equal(game.winner, "O", "Bot (circle) should have won");
 });
