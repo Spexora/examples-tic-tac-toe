@@ -1,5 +1,8 @@
 
 Feature: Multiplayer tic-tac-toe game state is managed by the server
+    As a user
+    I want the multiplayer game of tic-tac-toe to be managed by the server
+    So that my friends can't cheat in the game
 
     Scenario: Client sends a move to the server
         Given a multiplayer game is in progress

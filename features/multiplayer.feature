@@ -1,4 +1,8 @@
+
 Feature: Play a multi-player game of tic-tac-toe
+    As a user
+    I want to be able to play a game of tic-tac-toe against my friends
+    So that I can inflate my ego when I win
 
     Scenario: Main screen shows game mode options
         Given the application is open

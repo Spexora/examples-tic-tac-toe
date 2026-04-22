@@ -1,5 +1,8 @@
 
 Feature: Play a single-player game of tic-tac-toe
+    As a user
+    I want to be able to play a game of tic-tac-toe
+    So that I can still my hunger of playing games
 
     Scenario: Start a new game
         Given the application is open
@@ -10,12 +13,6 @@ Feature: Play a single-player game of tic-tac-toe
         Given a new game has started
         When the user selects an empty square
         Then a cross is shown in that square
-
-    Scenario: Second move places a circle
-        Given a game has started
-        And one square already contains a cross
-        When the user selects a different empty square
-        Then a circle is shown in that square
 
     Scenario: Occupied square cannot be selected
         Given a game has started

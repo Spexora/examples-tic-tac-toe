@@ -1,5 +1,8 @@
 
 Feature: Visual theme
+    As a user
+    I want a good and user friendly UI/UX
+    So that I can understand the game properly and know what buttons do what
 
     Scenario: Dark theme is used
         When the user opens the application
