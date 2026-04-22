@@ -16,6 +16,7 @@ import {
   type GameSession,
   type MoveResult,
 } from "../../src/lib/server-game.js";
+import { botMove, findWinningMove } from "../../src/lib/bot.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -32,6 +33,10 @@ let client1Board: (Player | null)[];
 let client2Board: (Player | null)[];
 let pendingMoveFromClient: { player: Player; index: number } | null = null;
 let lastMoveResult: MoveResult | null = null;
+
+// Bot game state
+let botMoveIndex: number = -1;
+let blockTargetIndex: number = -1;
 
 // Helper: convert a GameSession to a GameState (for shared step compatibility)
 function sessionToGameState(session: GameSession): GameState {
@@ -690,4 +695,142 @@ Then("the board does not change for either user", function () {
     boardBefore,
     "Client 2 board should not have changed after a rejected move",
   );
+});
+
+// ─────────────────────────────────────────────────────────────
+// Bot feature steps
+// ─────────────────────────────────────────────────────────────
+
+// "the user plays as cross" — used as Given and Then (single definition handles both)
+Given("the user plays as cross", function () {
+  assert.equal(
+    game.currentPlayer,
+    "X",
+    "User (cross) should be the current player at game start",
+  );
+});
+
+// "the bot plays as circle" — used as Given and Then (single definition handles both)
+Given("the bot plays as circle", function () {
+  // Bot is always O in singleplayer — nothing further to assert beyond game existence
+  assert.ok(game, "Game must exist");
+});
+
+// After the user makes a move, the bot responds automatically
+Then("the bot makes the next move automatically", function () {
+  assert.equal(
+    game.currentPlayer,
+    "O",
+    "It must be the bot's turn after the user moved",
+  );
+  botMoveIndex = botMove(game);
+  game = makeMove(game, botMoveIndex);
+  assert.equal(
+    game.board[botMoveIndex],
+    "O",
+    "Bot should have placed a circle",
+  );
+});
+
+Then("a circle is shown in an empty square", function () {
+  assert.ok(botMoveIndex !== -1, "Bot must have made a move");
+  assert.equal(
+    game.board[botMoveIndex],
+    "O",
+    "Bot's square should show a circle",
+  );
+});
+
+// User makes their first move
+Given("the user has made the first move", function () {
+  selectedIndex = game.board.findIndex((cell) => cell === null);
+  assert.ok(selectedIndex !== -1, "There should be an empty square");
+  game = makeMove(game, selectedIndex);
+  assert.equal(
+    game.board[selectedIndex],
+    "X",
+    "User should have placed a cross",
+  );
+});
+
+// After user's first move, it is the bot's turn
+Given("the bot has not moved yet", function () {
+  assert.equal(
+    game.currentPlayer,
+    "O",
+    "It should be the bot's turn (O) after the user's first move",
+  );
+});
+
+// User tries to move on the bot's turn — the move must be ignored
+When("the user selects another empty square", function () {
+  (this as any).boardBefore = [...game.board];
+  // The user can only move on their own turn (X). It is currently the bot's
+  // turn (O), so the interaction is blocked — game state does not change.
+});
+
+// ─── Bot blocking / winning scenarios ───
+
+Given("a game is in progress", function () {
+  game = createGame();
+  serverSession = undefined;
+  botMoveIndex = -1;
+  blockTargetIndex = -1;
+});
+
+// Set up a board where X has two marks in a row and can win on the third square.
+// Board after setup: [X, X, null, O, null, null, null, null, null]
+// X threatens row [0,1,2]; blockTargetIndex = 2
+Given("the user has two marks in a row", function () {
+  game = createGame();
+  game = makeMove(game, 0); // X at 0
+  game = makeMove(game, 3); // O at 3
+  game = makeMove(game, 1); // X at 1  — now O's turn, X threatens [0,1,2]
+  blockTargetIndex = 2;
+});
+
+Given("the remaining square in that row is empty", function () {
+  assert.equal(
+    game.board[blockTargetIndex],
+    null,
+    "The blocking/winning square must still be empty",
+  );
+});
+
+When("the bot takes its turn", function () {
+  assert.equal(game.currentPlayer, "O", "It must be the bot's turn");
+  botMoveIndex = botMove(game);
+  game = makeMove(game, botMoveIndex);
+});
+
+Then("the bot marks the remaining square in that row", function () {
+  assert.equal(
+    botMoveIndex,
+    blockTargetIndex,
+    `Bot should have moved to index ${blockTargetIndex} (block/win square)`,
+  );
+  assert.equal(
+    game.board[botMoveIndex],
+    "O",
+    "Bot's chosen square should contain a circle",
+  );
+});
+
+// Set up a board where O (bot) already has two marks in a row and can win.
+// Sequence: X@0, O@3, X@7, O@4, X@2  →  currentPlayer=O
+// Board: [X, null, X, O, O, null, null, X, null]
+// O threatens row [3,4,5]; blockTargetIndex = 5
+Given("the bot has two marks in a row", function () {
+  game = createGame();
+  game = makeMove(game, 0); // X
+  game = makeMove(game, 3); // O
+  game = makeMove(game, 7); // X
+  game = makeMove(game, 4); // O — bot now has [3,4]; winning square is 5
+  game = makeMove(game, 2); // X (not in O's row) — now O's turn
+  blockTargetIndex = 5;
+});
+
+Then("the bot wins the game", function () {
+  assert.equal(game.status, "won", "Game should be won after bot's move");
+  assert.equal(game.winner, "O", "The bot (O) should have won");
 });

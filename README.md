@@ -10,6 +10,7 @@ A tic-tac-toe game with single-player and real-time multiplayer support, built w
 - Win detection for all rows, columns, and diagonals
 - Tie detection when all squares are filled
 - Game-over messages for wins and ties
+- **Singleplayer bot** – the user always plays as X; the bot (O) responds automatically, blocks winning threats, and takes winning moves when available
 - **Multiplayer** – create a game and share an invite link; state is managed by the server and broadcast to both clients via Server-Sent Events (SSE)
 - Only the player whose turn it is can make a move; server validates and rejects invalid moves
 - Dark visual theme with high-contrast text (WCAG AA compliant)
@@ -60,6 +61,7 @@ npm run preview
 Behaviour is specified in Cucumber feature files under `features/`:
 
 - `features/game.feature` – game logic (moves, wins, ties)
+- `features/bot.feature` – singleplayer bot behaviour (automatic moves, blocking, winning)
 - `features/visual_theme.feature` – dark theme and hover feedback
 - `features/multiplayer.feature` – multiplayer game flow (mode selection, invite links, role assignment)
 - `features/managed_by_server.feature` – server-authoritative move processing and SSE broadcast
@@ -71,8 +73,9 @@ npm test
 ```
 
 Step definitions are in `features/step_definitions/stepdefs.ts` and exercise the
-game logic (`src/lib/game.ts`) and multiplayer session logic (`src/lib/server-game.ts`)
-directly, as well as inspecting the Svelte source for visual-theme compliance.
+game logic (`src/lib/game.ts`), bot logic (`src/lib/bot.ts`), and multiplayer session
+logic (`src/lib/server-game.ts`) directly, as well as inspecting the Svelte source for
+visual-theme compliance.
 
 ## Multiplayer Flow
 
@@ -90,6 +93,7 @@ directly, as well as inspecting the Svelte source for visual-theme compliance.
 src/
   lib/
     game.ts                     # Pure game logic (singleplayer)
+    bot.ts                      # Bot AI – move selection (win, block, centre, corner)
     server-game.ts              # Multiplayer session logic (pure functions)
     game-store.server.ts        # In-memory session store with SSE listeners
   routes/
