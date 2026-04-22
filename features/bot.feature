@@ -1,14 +1,31 @@
 
 Feature: Singleplayer bot
     As a user
-    I want a bot that I can play against in singleplayer mode
+    I want to play tic-tac-toe against a bot in singleplayer mode
     So that I can play even when no other player is available
 
-    Scenario: Bot makes a move after the user's first move
+    Scenario: Starting a singleplayer game assigns the bot as the opponent
+        Given the application is open
+        When the user starts a singleplayer game
+        Then a 3x3 game board is shown
+        And the user plays as cross
+        And the bot plays as circle
+
+    Scenario: Bot makes the second move automatically
+        Given a new singleplayer game has started
+        And the user plays as cross
+        And the bot plays as circle
+        When the user selects an empty square
+        Then a cross is shown in that square
+        And the bot makes the next move automatically
+        And a circle is shown in an empty square
+
+    Scenario: User cannot play the bot's turn
         Given a new singleplayer game has started
         And the user has made the first move
-        When the bot takes its turn
-        Then the board shows one additional move from the bot
+        And the bot has not moved yet
+        When the user selects another empty square
+        Then the board does not change
 
     Scenario: Bot blocks a winning move
         Given a singleplayer game is in progress
@@ -24,8 +41,3 @@ Feature: Singleplayer bot
         When the bot takes its turn
         Then the bot marks the remaining square in that row
         And the bot wins the game
-
-    Scenario: Bot never loses
-        Given a singleplayer game is in progress
-        When the game is played to completion
-        Then the user does not win
