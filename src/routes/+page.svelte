@@ -1,14 +1,17 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 	import { createGame, makeMove, type GameState, type Player } from '$lib/game.js';
+	import { botMove } from '$lib/bot.js';
 
 	type AppMode = 'select' | 'singleplayer';
 
 	let mode: AppMode = 'select';
 	let game: GameState = createGame();
+	let botThinking = false;
 
 	async function startSinglePlayer() {
 		game = createGame();
+		botThinking = false;
 		mode = 'singleplayer';
 	}
 
@@ -20,16 +23,30 @@
 		await goto(`/game/${data.id}`);
 	}
 
-	function handleCellClick(index: number) {
+	async function handleCellClick(index: number) {
+		// Only allow user moves when it is X's turn (user is always X)
+		if (game.currentPlayer !== 'X' || game.status !== 'playing' || botThinking) return;
+
 		game = makeMove(game, index);
+
+		// After user moves, let the bot respond automatically
+		if (game.status === 'playing' && game.currentPlayer === 'O') {
+			botThinking = true;
+			// Small delay so the user can see their move before the bot responds
+			await new Promise((resolve) => setTimeout(resolve, 300));
+			game = makeMove(game, botMove(game));
+			botThinking = false;
+		}
 	}
 
 	function startNewGame() {
 		game = createGame();
+		botThinking = false;
 	}
 
 	function backToMenu() {
 		mode = 'select';
+		botThinking = false;
 	}
 
 	function getStatusMessage(g: GameState): string {
@@ -39,7 +56,8 @@
 		if (g.status === 'tied') {
 			return "It's a tie!";
 		}
-		return g.currentPlayer === 'X' ? "Cross's turn" : "Circle's turn";
+		if (botThinking) return 'Bot is thinking…';
+		return g.currentPlayer === 'X' ? "Your turn (✕)" : "Bot's turn (○)";
 	}
 
 	function getCellSymbol(cell: Player | null): string {
@@ -77,7 +95,7 @@
 					class:occupied={cell !== null}
 					class:cross={cell === 'X'}
 					class:circle={cell === 'O'}
-					disabled={cell !== null || game.status !== 'playing'}
+					disabled={cell !== null || game.status !== 'playing' || game.currentPlayer !== 'X' || botThinking}
 					on:click={() => handleCellClick(i)}
 					aria-label={cell
 						? `${cell === 'X' ? 'Cross' : 'Circle'} at position ${i + 1}`
