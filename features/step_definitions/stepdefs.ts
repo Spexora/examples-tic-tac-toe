@@ -16,6 +16,7 @@ import {
   type GameSession,
   type MoveResult,
 } from "../../src/lib/server-game.js";
+import { getBotMove } from "../../src/lib/bot.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -689,5 +690,138 @@ Then("the board does not change for either user", function () {
     client2Board,
     boardBefore,
     "Client 2 board should not have changed after a rejected move",
+  );
+});
+
+// ─────────────────────────────────────────────────────────────
+// Bot feature steps
+// ─────────────────────────────────────────────────────────────
+
+// The bot always plays as O; the user always plays as X.
+const BOT_PLAYER: Player = "O";
+let botMoveIndex: number = -1;
+let remainingSquareIndex: number = -1;
+
+Given("a new singleplayer game has started", function () {
+  game = createGame();
+  serverSession = undefined;
+  botMoveIndex = -1;
+  remainingSquareIndex = -1;
+});
+
+Given("the user has made the first move", function () {
+  // User (X) picks the first available empty square
+  const index = game.board.findIndex((cell) => cell === null);
+  assert.ok(
+    index !== -1,
+    "There should be an empty square for the user's first move",
+  );
+  game = makeMove(game, index);
+  assert.equal(game.board[index], "X", "User should have placed X");
+});
+
+When("the bot takes its turn", function () {
+  assert.equal(game.currentPlayer, BOT_PLAYER, "It should be the bot's turn");
+  botMoveIndex = getBotMove(game, BOT_PLAYER);
+  assert.ok(
+    botMoveIndex >= 0 && botMoveIndex < 9,
+    "Bot should return a valid board index",
+  );
+  game = makeMove(game, botMoveIndex);
+});
+
+Then("the board shows one additional move from the bot", function () {
+  const botCells = game.board.filter((cell) => cell === BOT_PLAYER).length;
+  assert.equal(
+    botCells,
+    1,
+    "Bot should have placed exactly one mark on the board",
+  );
+  assert.equal(
+    game.board[botMoveIndex],
+    BOT_PLAYER,
+    "Bot's mark should be at the chosen index",
+  );
+});
+
+Given("a singleplayer game is in progress", function () {
+  game = createGame();
+  serverSession = undefined;
+  botMoveIndex = -1;
+  remainingSquareIndex = -1;
+});
+
+Given("the user has two marks in a row", function () {
+  // Set up: X at 0, O at 6, X at 1 → X has two in row 0 (needs 2 to win), O's turn
+  game = makeMove(game, 0); // X at 0
+  game = makeMove(game, 6); // O at 6 (away from row 0)
+  game = makeMove(game, 1); // X at 1
+  remainingSquareIndex = 2; // the square X needs to complete row 0
+  assert.equal(
+    game.currentPlayer,
+    BOT_PLAYER,
+    "It should be the bot's turn after setup",
+  );
+});
+
+Given("the bot has two marks in a row", function () {
+  // Set up: X at 0, O at 3, X at 1, O at 4, X at 8 → O has 3 and 4 (needs 5 to win row 1), O's turn
+  game = makeMove(game, 0); // X at 0
+  game = makeMove(game, 3); // O at 3
+  game = makeMove(game, 1); // X at 1
+  game = makeMove(game, 4); // O at 4
+  game = makeMove(game, 8); // X at 8
+  remainingSquareIndex = 5; // the square O needs to complete row 1 (3,4,5)
+  assert.equal(
+    game.currentPlayer,
+    BOT_PLAYER,
+    "It should be the bot's turn after setup",
+  );
+});
+
+Given("the remaining square in that row is empty", function () {
+  assert.equal(
+    game.board[remainingSquareIndex],
+    null,
+    "The remaining square in that row should be empty",
+  );
+});
+
+Then("the bot marks the remaining square in that row", function () {
+  assert.equal(
+    botMoveIndex,
+    remainingSquareIndex,
+    `Bot should have marked the remaining square at index ${remainingSquareIndex}`,
+  );
+  assert.equal(
+    game.board[botMoveIndex],
+    BOT_PLAYER,
+    "The bot's mark should be at the remaining square",
+  );
+});
+
+Then("the bot wins the game", function () {
+  assert.equal(game.status, "won", "Game should be over with a winner");
+  assert.equal(game.winner, BOT_PLAYER, "The bot should have won the game");
+});
+
+When("the game is played to completion", function () {
+  // User (X) always picks the first available square; bot (O) plays optimally
+  while (game.status === "playing") {
+    if (game.currentPlayer === "X") {
+      const userMove = game.board.findIndex((cell) => cell === null);
+      game = makeMove(game, userMove);
+    } else {
+      const move = getBotMove(game, BOT_PLAYER);
+      game = makeMove(game, move);
+    }
+  }
+});
+
+Then("the user does not win", function () {
+  assert.notEqual(
+    game.winner,
+    "X",
+    "The user (X) should not have won; the bot must prevent the user from winning",
   );
 });
